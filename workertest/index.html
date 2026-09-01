@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Worker-Test — rastert WebKit im Worker beschleunigt?</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#12181f; color:#f5ecd8;
+         font:14px -apple-system,system-ui,sans-serif;
+         padding:calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)); }
+  h1 { font-size:17px; margin:0 0 4px; }
+  p.sub { margin:0 0 14px; color:#9fb0bf; font-size:13px; line-height:1.45; }
+  button { width:100%; padding:16px; font:700 16px -apple-system,system-ui,sans-serif;
+           background:#2b6b4f; color:#fff; border:0; border-radius:10px; -webkit-appearance:none; margin-bottom:10px; }
+  button.grau { background:#3a4551; }
+  #stand { color:#9fb0bf; font-size:13px; margin:8px 0; min-height:1.2em; }
+  textarea { width:100%; box-sizing:border-box; height:46vh; resize:none;
+             font:10px ui-monospace,Menlo,monospace; line-height:1.35;
+             background:#0b1015; color:#cfe3d0; border:1px solid #2a3540;
+             border-radius:8px; padding:8px; -webkit-user-select:text; user-select:text; }
+  #gl { position:fixed; left:-9999px; top:0; width:64px; height:64px; }
+</style>
+</head>
+<body>
+
+<h1>Worker-Test</h1>
+<p class="sub">
+  Rastert WebKit eine <b>OffscreenCanvas im Worker</b> beschleunigt — oder in Software?<br>
+  Das ist die letzte offene Frage vor dem Umbau. Ohne Spielcode, nur diese Seite.
+  Dauert rund 40&nbsp;Sekunden. Bitte <b>nicht</b> wegwischen und den Bildschirm anlassen.
+</p>
+
+<button id="los">Test starten</button>
+<div id="stand"></div>
+<textarea id="aus" readonly wrap="off"></textarea>
+<button id="kop" class="grau">Kopieren</button>
+<button id="teil" class="grau" hidden>Teilen</button>
+<canvas id="gl" width="64" height="64"></canvas>
+<canvas id="vorschau" hidden style="display:block;margin:10px auto;border:1px solid #2a3540;border-radius:6px;"></canvas>
+
+<script>
+// ============================================================================
+// WAS HIER GEMESSEN WIRD — und warum es genau diese zwei Zahlen sind
+// ============================================================================
+//
+// Im Spiel kostet ein Bild am See 23 ms, davon 14 ms in EINEM synchronen
+// Aufruf: die Weltszene wird in eine Leinwand gezeichnet und dann als Textur
+// gelesen. Canvas 2D rastert faul — das Zeichnen selbst kostet 1 ms, das
+// Rastern passiert erst beim Lesen. Gemessen auf dem Geraet:
+//
+//     nur hochladen (nicht gezeichnet)   ~4 ms
+//     zeichnen und hochladen            ~14 ms
+//     => Bytes ~4 ms, Rastern ~10 ms
+//
+// Der Plan ist, dieses Rastern in einen Worker zu verlegen. Der Hauptthread
+// bekaeme dann nur noch ein fertiges Bild und muesste es hochladen.
+//
+// Das steht und faellt an einer Eigenschaft der Plattform, die man nicht
+// nachlesen, sondern nur messen kann: ob WebKit eine OffscreenCanvas im
+// Worker ueberhaupt hardwarebeschleunigt. Tut es das nicht, rastert der
+// Worker in Software — und dann ist der Umbau nicht neutral, sondern
+// SCHLECHTER als heute.
+//
+// Deshalb misst diese Seite zwei Wege mit derselben Szene, derselben Groesse
+// und VERSCHRAENKT (abwechselnd, nicht nacheinander — sonst misst der zweite
+// Weg die Waerme des ersten; das ist der Fehler, an dem in diesem Projekt
+// schon fuenf Runden gescheitert sind):
+//
+//   HAUPT    zeichnen + texImage2D auf dem Hauptthread      = heutiger Zustand
+//   WORKER   zeichnen + rastern im Worker, Bild rueber,
+//            texImage2D auf dem Hauptthread
+//
+// Die Zahl, auf die es ankommt, ist "blockiert": wie lange der HAUPTTHREAD
+// steht. Alles andere darf ruhig laenger dauern, solange es nebenher laeuft.
+// ============================================================================
+
+const B = 1290, H = 2325;          // wie die Welt-Leinwand am Geraet (430x775 @3x)
+const RUNDEN = 24;                 // je Weg; verschraenkt, also 48 Messungen
+const AUFWAERMEN = 4;
+
+// --- Die Szene --------------------------------------------------------------
+// Als Text, weil der Worker sie sonst nicht bekommt. Sie ist keine Kopie
+// unserer Weltszene (die haengt an ~200 Globals), sondern hat deren CHARAKTER:
+// grosse Verlaufsflaechen, viele kleine Pfade, Bezierkurven mit Fuellung,
+// Kreise und ein paar weiche Schatten. Rund 1200 Zeichenbefehle — die Kulisse
+// am See allein sind gezaehlte 1420.
+const SZENE = `
+function zeichne(c, w, h, t) {
+  var i, j, x, y, g;
+  g = c.createLinearGradient(0, 0, 0, h * 0.45);
+  g.addColorStop(0, "#63b8e8"); g.addColorStop(1, "#cfe9f7");
+  c.fillStyle = g; c.fillRect(0, 0, w, h * 0.45);
+
+  // Berge: gefuellte Polygone
+  for (j = 0; j < 3; j++) {
+    c.beginPath(); c.moveTo(0, h * 0.34 + j * 14);
+    for (i = 0; i <= 22; i++) {
+      x = w * i / 22;
+      y = h * 0.30 + j * 16 - Math.abs(Math.sin(i * 1.7 + j)) * h * 0.05;
+      c.lineTo(x, y);
+    }
+    c.lineTo(w, h * 0.45); c.lineTo(0, h * 0.45); c.closePath();
+    c.fillStyle = ["#8fa3b8", "#7d93aa", "#6b8299"][j]; c.fill();
+  }
+
+  // Wald: viele kleine Dreiecke
+  c.fillStyle = "#2f6b46";
+  for (i = 0; i < 90; i++) {
+    x = (i * 37 % w); y = h * 0.40 + (i % 5) * 6;
+    c.beginPath(); c.moveTo(x, y - 34); c.lineTo(x - 13, y); c.lineTo(x + 13, y);
+    c.closePath(); c.fill();
+  }
+
+  // Wasser
+  g = c.createLinearGradient(0, h * 0.45, 0, h);
+  g.addColorStop(0, "#4aa3c7"); g.addColorStop(1, "#0d2a3d");
+  c.fillStyle = g; c.fillRect(0, h * 0.45, w, h * 0.55);
+
+  // Fische: Bezierkoerper mit Radialverlauf, Flosse, Auge
+  for (i = 0; i < 22; i++) {
+    x = ((i * 211 + t * 40) % (w + 300)) - 150;
+    y = h * 0.52 + ((i * 137) % Math.round(h * 0.42));
+    var s = 34 + (i % 4) * 11;
+    c.save(); c.translate(x, y);
+    g = c.createRadialGradient(0, -s * 0.2, s * 0.1, 0, 0, s);
+    g.addColorStop(0, "#eaf3f6"); g.addColorStop(1, "#5d7f8c");
+    c.beginPath();
+    c.moveTo(-s, 0);
+    c.bezierCurveTo(-s * 0.5, -s * 0.55, s * 0.5, -s * 0.5, s, 0);
+    c.bezierCurveTo(s * 0.5, s * 0.5, -s * 0.5, s * 0.55, -s, 0);
+    c.closePath(); c.fillStyle = g; c.fill();
+    c.beginPath(); c.moveTo(-s, 0); c.lineTo(-s * 1.5, -s * 0.4);
+    c.lineTo(-s * 1.5, s * 0.4); c.closePath();
+    c.fillStyle = "#41616e"; c.fill();
+    c.beginPath(); c.arc(s * 0.55, -s * 0.12, s * 0.1, 0, 6.283);
+    c.fillStyle = "#11202a"; c.fill();
+    c.restore();
+  }
+
+  // Blasen
+  c.fillStyle = "rgba(255,255,255,0.35)";
+  for (i = 0; i < 120; i++) {
+    x = (i * 97 % w); y = h * 0.46 + ((i * 53 + t * 20) % Math.round(h * 0.5));
+    c.beginPath(); c.arc(x, y, 2 + (i % 4), 0, 6.283); c.fill();
+  }
+
+  // Ein paar weiche Schatten — der Posten, der in der Tiefsee 60x je Bild lief
+  c.save();
+  c.shadowBlur = 40; c.shadowColor = "rgba(255,240,180,0.9)";
+  c.fillStyle = "rgba(255,240,180,0.9)";
+  for (i = 0; i < 6; i++) {
+    c.beginPath(); c.arc(w * (0.15 + i * 0.14), h * (0.6 + (i % 3) * 0.1), 16, 0, 6.283); c.fill();
+  }
+  c.restore();
+}`;
+
+// --- Worker -----------------------------------------------------------------
+const WORKER_CODE = SZENE + `
+let lw = null, ctx = null;
+self.onmessage = (e) => {
+  const d = e.data;
+  if (d.cmd === "init") {
+    try {
+      lw = new OffscreenCanvas(d.w, d.h);
+      ctx = lw.getContext("2d");
+      self.postMessage({ ok: !!ctx });
+    } catch (err) { self.postMessage({ ok: false, fehler: String(err) }); }
+    return;
+  }
+  if (d.cmd === "bild") {
+    const t0 = performance.now();
+    zeichne(ctx, lw.width, lw.height, d.t);
+    const tZeichnen = performance.now() - t0;
+    // transferToImageBitmap ERZWINGT das Rastern — genau wie bei uns der
+    // Griff an die Textur. Ohne das misst man wieder nur das Aufschreiben.
+    const bmp = lw.transferToImageBitmap();
+    const tGesamt = performance.now() - t0;
+    self.postMessage({ bmp, tZeichnen, tRastern: tGesamt - tZeichnen, tGesamt }, [bmp]);
+  }
+};`;
+
+// --- Aufbau -----------------------------------------------------------------
+const el = (id) => document.getElementById(id);
+const stand = (s) => { el("stand").textContent = s; };
+
+let gl, tex, worker, haupt, hauptCtx, zeichne = null;
+
+function glAuf() {
+  const c = el("gl");
+  gl = c.getContext("webgl2") || c.getContext("webgl");
+  if (!gl) return false;
+  tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return true;
+}
+
+// Der Upload, den BEIDE Wege gemeinsam haben. Erst `texImage2D` zwingt eine
+// gezeichnete Leinwand wirklich zum Rastern; deshalb steckt beim Weg HAUPT
+// genau hier der Posten, der uns im Spiel 14 ms kostet.
+function hochladen(quelle) {
+  const t0 = performance.now();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, quelle);
+  gl.flush();
+  return performance.now() - t0;
+}
+
+function workerAuf() {
+  return new Promise((fertig) => {
+    const url = URL.createObjectURL(new Blob([WORKER_CODE], { type: "text/javascript" }));
+    worker = new Worker(url);
+    worker.onmessage = (e) => fertig(e.data);
+    worker.postMessage({ cmd: "init", w: B, h: H });
+    setTimeout(() => fertig({ ok: false, fehler: "keine Antwort vom Worker" }), 5000);
+  });
+}
+
+function workerBild(t) {
+  return new Promise((fertig) => {
+    worker.onmessage = (e) => fertig(e.data);
+    const t0 = performance.now();
+    worker.postMessage({ cmd: "bild", t });
+    worker._t0 = t0;
+  });
+}
+
+const warte = (ms) => new Promise(r => setTimeout(r, ms));
+const st = (a) => {
+  if (!a.length) return { p50: 0, p95: 0, min: 0, max: 0 };
+  const s = a.slice().sort((x, y) => x - y);
+  return { p50: s[s.length >> 1], p95: s[Math.min(s.length - 1, Math.floor(s.length * 0.95))],
+           min: s[0], max: s[s.length - 1] };
+};
+const z = (n, br) => (Math.round(n * 100) / 100).toFixed(2).padStart(br || 8);
+
+async function lauf() {
+  el("los").disabled = true;
+  const zeilen = [];
+  const kopf = (s) => { zeilen.push(s); el("aus").value = zeilen.join("\n"); };
+
+  kopf("=== WORKER-TEST " + new Date().toISOString().slice(0, 19).replace("T", " ") + " ===");
+  kopf("Leinwand " + B + "x" + H + " (" + (B * H * 4 / 1048576).toFixed(2) + " MB)  ·  "
+     + RUNDEN + " Runden je Weg, verschraenkt");
+  kopf("Browser: " + navigator.userAgent.slice(0, 130));
+  kopf("Kerne: " + (navigator.hardwareConcurrency || "?"));
+  kopf("");
+
+  if (typeof OffscreenCanvas === "undefined") {
+    kopf("ERGEBNIS: OffscreenCanvas gibt es hier nicht. Der Umbau ist auf diesem");
+    kopf("Geraet unmoeglich. Keine weitere Messung noetig.");
+    el("los").disabled = false; return;
+  }
+  if (!glAuf()) { kopf("ABBRUCH: kein WebGL."); el("los").disabled = false; return; }
+
+  haupt = document.createElement("canvas");
+  haupt.width = B; haupt.height = H;
+  hauptCtx = haupt.getContext("2d");
+  if (!hauptCtx) { kopf("ABBRUCH: kein 2D-Kontext."); el("los").disabled = false; return; }
+  // Dieselbe Funktion wie im Worker, aus demselben Text gebaut — nicht per
+  // eval() in den Funktionsrumpf, sondern ausdruecklich hierher. Sonst haengt
+  // die Messung an einer Scoping-Feinheit von eval, und beide Wege muessen
+  // BEWEISBAR dieselbe Szene zeichnen, sonst vergleicht der Test nichts.
+  zeichne = new Function(SZENE + "; return zeichne;")();
+
+  stand("Worker wird gestartet …");
+  const init = await workerAuf();
+  if (!init.ok) {
+    kopf("ERGEBNIS: Der Worker konnte keine OffscreenCanvas anlegen.");
+    kopf("Fehler: " + (init.fehler || "unbekannt"));
+    kopf("Damit ist der Umbau auf diesem Geraet nicht moeglich.");
+    el("los").disabled = false; return;
+  }
+
+  const H_block = [], H_upl = [], W_block = [], W_upl = [], W_zeichnen = [], W_rastern = [], W_weg = [];
+
+  for (let r = 0; r < RUNDEN + AUFWAERMEN; r++) {
+    const zaehlt = r >= AUFWAERMEN;
+    stand("Runde " + (r + 1) + " von " + (RUNDEN + AUFWAERMEN) + " …");
+
+    // --- Weg HAUPT: alles auf dem Hauptthread (heutiger Zustand) ---
+    {
+      const t0 = performance.now();
+      zeichne(hauptCtx, B, H, r);
+      const tUp = hochladen(haupt);
+      const tBlock = performance.now() - t0;
+      if (zaehlt) { H_block.push(tBlock); H_upl.push(tUp); }
+    }
+    await warte(30);
+
+    // --- Weg WORKER: rastern im Worker, nur der Upload bleibt hier ---
+    {
+      const tSchick = performance.now();
+      const a = await workerBild(r);
+      const tWeg = performance.now() - tSchick - a.tGesamt;   // Uebergabe/Wartezeit
+      const t0 = performance.now();
+      const tUp = hochladen(a.bmp);
+      const tBlock = performance.now() - t0;
+      a.bmp.close();
+      if (zaehlt) {
+        W_block.push(tBlock); W_upl.push(tUp);
+        W_zeichnen.push(a.tZeichnen); W_rastern.push(a.tRastern); W_weg.push(Math.max(0, tWeg));
+      }
+    }
+    await warte(30);
+  }
+
+  const hb = st(H_block), wb = st(W_block);
+  const zeile = (name, s) => kopf(name.padEnd(30) + z(s.p50) + z(s.p95) + z(s.min) + z(s.max));
+
+  kopf("--- DIE ZAHL, AUF DIE ES ANKOMMT: HAUPTTHREAD BLOCKIERT (ms) ---");
+  kopf("".padEnd(30) + "     p50     p95     min     max");
+  zeile("HAUPT  zeichnen+upload", hb);
+  zeile("WORKER nur upload", wb);
+  kopf("");
+  kopf("--- die Teilstuecke ---");
+  zeile("HAUPT  davon upload", st(H_upl));
+  zeile("WORKER upload (Bitmap)", st(W_upl));
+  zeile("WORKER zeichnen (im Worker)", st(W_zeichnen));
+  zeile("WORKER rastern (im Worker)", st(W_rastern));
+  zeile("WORKER Uebergabe/Wartezeit", st(W_weg));
+  kopf("");
+
+  // --- Das Urteil ----------------------------------------------------------
+  const gew = hb.p50 - wb.p50;
+  const proz = hb.p50 > 0 ? (gew / hb.p50 * 100) : 0;
+  const wRast = st(W_rastern).p50, hRast = hb.p50 - st(H_upl).p50;
+
+  kopf("--- URTEIL ---");
+  kopf("Hauptthread blockiert:  " + z(hb.p50, 0) + " ms  ->  " + z(wb.p50, 0) + " ms"
+     + "   (" + (gew >= 0 ? "-" : "+") + Math.abs(proz).toFixed(0) + " %)");
+  kopf("Rastern auf dem Hauptthread: ~" + z(hRast, 0) + " ms   im Worker: ~" + z(wRast, 0) + " ms");
+  kopf("");
+  if (wRast > hRast * 1.6) {
+    kopf("BEFUND: Der Worker rastert DEUTLICH LANGSAMER (" + (wRast / Math.max(0.01, hRast)).toFixed(1) + "x).");
+    kopf("Das ist das Bild einer Software-Rasterung ohne Beschleunigung.");
+    kopf("=> Der Umbau lohnt sich NICHT. Er wuerde den Hauptthread entlasten,");
+    kopf("   aber die Welt kaeme viel zu langsam nach.");
+  } else if (gew > hb.p50 * 0.4) {
+    kopf("BEFUND: Der Hauptthread wird um " + proz.toFixed(0) + " % entlastet, und der Worker");
+    kopf("rastert in vergleichbarer Zeit. Das ist genau der erhoffte Fall.");
+    kopf("=> Der Umbau traegt.");
+  } else {
+    kopf("BEFUND: Der Hauptthread wird kaum entlastet (" + proz.toFixed(0) + " %).");
+    kopf("Der Aufwand steckt dann nicht im Rastern, sondern in der Uebergabe");
+    kopf("oder im Upload. => Der Umbau lohnt sich so nicht.");
+  }
+  kopf("");
+  kopf("ZUR EINORDNUNG: im Spiel kostet ein Bild am See 23 ms, davon 14 ms in");
+  kopf("genau dem Aufruf, den 'HAUPT' hier nachstellt. Ohne diese 14 ms lagen");
+  kopf("die gemessenen Grenzen bei 14 ms (71 fps) bis 19 ms (53 fps).");
+
+  // Der Beweis fuers Auge: so sah das Bild aus, das gemessen wurde. Ohne das
+  // koennte der Test auch eine leere Leinwand hoch- und runterschieben und
+  // saehe genauso schnell aus.
+  try {
+    const v = el("vorschau");
+    v.width = 129; v.height = 232;
+    v.getContext("2d").drawImage(haupt, 0, 0, 129, 232);
+    v.hidden = false;
+    const px = hauptCtx.getImageData(645, 1800, 1, 1).data;
+    kopf("");
+    kopf("Gegenprobe: ein Pixel aus dem Wasser = rgba(" + px[0] + "," + px[1] + "," + px[2] + "," + px[3] + ")");
+    kopf(px[3] === 0 ? "  ACHTUNG: durchsichtig — es wurde nichts gezeichnet, der Test taugt nicht."
+                     : "  Es wurde wirklich gezeichnet.");
+  } catch (e) {}
+
+  stand("fertig.");
+  el("los").disabled = false;
+  try { worker.terminate(); } catch (e) {}
+}
+
+el("los").addEventListener("click", lauf);
+el("kop").addEventListener("click", async () => {
+  const t = el("aus").value;
+  let ok = false;
+  try { await navigator.clipboard.writeText(t); ok = true; } catch (e) {}
+  if (!ok) { try { el("aus").removeAttribute("readonly"); el("aus").focus();
+                   el("aus").setSelectionRange(0, t.length); ok = document.execCommand("copy"); } catch (e) {}
+            el("aus").setAttribute("readonly", "readonly"); }
+  el("kop").textContent = ok ? "kopiert" : "bitte von Hand";
+  setTimeout(() => { el("kop").textContent = "Kopieren"; }, 1500);
+});
+if (navigator.share) {
+  el("teil").hidden = false;
+  el("teil").addEventListener("click", () => {
+    navigator.share({ title: "Worker-Test", text: el("aus").value }).catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
