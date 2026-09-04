@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fisch-Entwürfe · A Silly Fishing Game</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #14181e; color: #e6e9ec;
+         font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 12px 12px 8px; border-bottom: 1px solid #2a3038; position: sticky; top: 0;
+           background: #14181ef2; backdrop-filter: blur(6px); z-index: 5; }
+  h1 { font-size: 16px; margin: 0 0 8px; letter-spacing: .01em; }
+  h1 small { font-weight: 400; color: #8b96a3; font-size: 12px; display: block; margin-top: 2px; }
+  #nav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tab, .chip { background: #232a33; color: #c9d2db; border: 1px solid #313a45;
+                border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
+  .tab.an, .chip.an { background: #3d6f8e; border-color: #4f8bb0; color: #fff; }
+  #steuerung { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 12px; color: #9aa6b2; }
+  select { background: #232a33; color: #e6e9ec; border: 1px solid #313a45; border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  main { padding: 10px 12px 60px; }
+  .hinweis { color: #93a0ad; font-size: 12px; margin: 6px 0 12px; line-height: 1.55; }
+  .hinweis b { color: #dbe3ea; }
+  .gitter { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 6px; margin-bottom: 18px; }
+  .reihe { display: flex; align-items: stretch; border-bottom: 1px solid #232a33; }
+  .reihe.kopfzeile { border-bottom: 1px solid #3a4450; position: sticky; top: 0; }
+  .artname { flex: 0 0 108px; min-width: 108px; padding: 8px 8px 8px 0; position: sticky; left: 0;
+             background: #14181e; z-index: 2; border-right: 1px solid #232a33; }
+  .artname b { display: block; font-size: 13px; }
+  .artname span { display: block; color: #75818d; font-size: 10.5px; line-height: 1.3; }
+  .spaltenkopf { padding: 8px 10px; min-width: 96px; font-size: 11px; color: #c9d2db; }
+  .spaltenkopf b { display: block; font-size: 12px; }
+  .spaltenkopf .ton { display: block; color: #75818d; font-size: 10px; }
+  .zellbox { padding: 8px 10px; display: flex; align-items: center; justify-content: center; }
+  canvas.zelle { border-radius: 6px; display: block; }
+  canvas.szene { border-radius: 12px; display: block; margin: 0 auto; box-shadow: 0 8px 30px #0008; }
+  .unterleiste { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .trenner { color: #4d5865; }
+  .notizen { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin-top: 14px; }
+  .notiz { background: #1a1f26; border: 1px solid #262e37; border-radius: 8px; padding: 9px 11px; }
+  .notiz b { font-size: 12px; color: #9fc4dc; }
+  .notiz p { margin: 3px 0 0; font-size: 12px; color: #96a2ae; line-height: 1.5; }
+  h3 { font-size: 14px; margin: 18px 0 6px; color: #9fc4dc; }
+  article h2 { font-size: 14px; color: #9fc4dc; margin: 20px 0 6px; }
+  article p, article li { font-size: 13px; color: #b6c0ca; line-height: 1.62; }
+  article ul { padding-left: 18px; }
+  article .fuss { color: #75818d; font-size: 11.5px; border-left: 2px solid #35404c; padding-left: 8px; }
+  article code { background: #1f252d; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  /* --- Umfrage-Ansicht: nuechtern, ohne jede Wertung --- */
+  .umfrage { display: grid; justify-content: center; margin: 4px auto 30px; }
+  .ubox { position: relative; }
+  .ubox canvas { display: block; border-radius: 8px; }
+  .ulabel { position: absolute; left: 6px; top: 5px; font-size: 11px; font-weight: 600;
+            color: #fff; background: #0007; border-radius: 4px; padding: 1px 6px; letter-spacing: .06em; }
+  body.umfrage-an #steuerung { display: none; }
+  body.umfrage-an h1 small { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fisch-Entwürfe
+    <small>Sechs Varianten nebeneinander · nichts davon ist eingebaut · Canvas 2D, derselbe Weg wie im Spiel</small>
+  </h1>
+  <div id="nav"></div>
+  <div id="steuerung"></div>
+</header>
+<main id="inhalt"></main>
+
+<div id="beschreibung" hidden>
+<article>
+<h2>Worum es geht</h2>
+<p>Dustins Freundin hat das Spiel gespielt und die Fische <b>zu einfach und zu kindhaft</b> genannt.
+Das ist eine Aussage über gestalterische Reife, nicht über die Menge an Details. Mehr Schuppen
+machen einen kindlichen Fisch nicht erwachsen, sondern zu einem detaillierten kindlichen Fisch.</p>
+<p>Fünf Stellschrauben entscheiden darüber, und jeder Entwurf hier stellt sie <i>bewusst</i> ein:
+das <b>Auge</b> (gross, rund, weiss, Glanzpunkt = Cartoon; klein, dunkel, mit Iris = erwachsen), die
+<b>Kontur</b> (gleichmässig dick und schwarz = Malbuch; atmend, aus der Motivfarbe, oder gar keine =
+reif), die <b>Palette</b> (satte Primärfarben nebeneinander = Bonbon; gebrochen und abgestimmt mit
+einem Akzent = reif), die <b>Proportion</b> (grosser Kopf, runder Bauch = Niedlichkeitsformel; echte,
+eigenwillige Fischsilhouetten = ernster und interessanter) und die <b>Unregelmässigkeit</b>
+(perfekt symmetrisch = einfach; gebrochene Kanten, asymmetrische Zeichnung = Handschrift).</p>
+
+<h2>Der gemeinsame Unterbau — und der eigentliche Befund</h2>
+<p>Im Spiel haben <b>alle</b> Arten dieselbe Körperlinie (<code>fishBodyPath</code>). Unterschiedlich
+sind nur zwei Zahlen, <code>len</code> und <code>h</code>. Ein Hecht ist eine breitgezogene Brasse.
+Das ist noch vor jeder Frage nach Schattierung der Grund, warum die Fische einander gleichen.</p>
+<p>Alle Entwürfe teilen sich deshalb eine neue Grundlage (<code>anatomie.js</code>): jede Art bekommt
+ein <b>Profil</b> aus getrennten Rücken- und Bauchstützpunkten, dazu einen Flossensatz mit Sitz und
+Form jeder einzelnen Flosse und den Ort von Auge, Maul und Kiemendeckel. Der Körper hängt an einer
+<b>Wirbelsäule, die sich biegt</b> — es schlägt also nicht nur die Schwanzfahne, der ganze Fisch
+schwimmt.</p>
+<p class="fuss">Nebenbefund aus dieser Arbeit: bei der Scholle steht im Spiel <code>h: 0,8</code>.
+Das ist keine Scholle, das ist ein Döbel. Ein Plattfisch ist von seiner Augenseite fast so hoch wie
+lang. Hier steht 1,45. Solche Datenfehler stecken vermutlich in mehr als einer der 105 Arten, und
+gegen sie hilft kein Zeichenstil.</p>
+
+<h2>A · Vektor <small>— flach und freundlich, nur handwerklich reifer</small></h2>
+<ul>
+<li><b>Silhouette</b> je Art eigen, ruhig und geschlossen.</li>
+<li><b>Kante</b> ist der Träger: Konturen in einer dunklen Variante der <i>eigenen</i> Farbe, nie
+Schwarz, und in der Breite gewichtet — unten dick, oben dünn.</li>
+<li><b>Licht</b> gibt es nicht. Volumen kommt aus der Kantendicke und einer harten Trennlinie
+zwischen Rücken- und Bauchton.</li>
+<li><b>Auge</b> kleiner als heute, <i>kein</i> weisser Augapfel: Irisring in der Akzentfarbe,
+Pupille in einem dunklen Ton der Körperfarbe, Glanz als dünner Bogen statt als Punkt, und erst ab
+L 20.</li>
+<li><b>Muster</b> harte Formen in einer dritten Farbe, an der Silhouette abgeschnitten — nie
+schwarze Transparenz wie heute.</li>
+</ul>
+
+<h2>B · Licht <small>— weich, ohne eine einzige Linie</small></h2>
+<ul>
+<li><b>Keine Kontur.</b> Was rund aussieht, ist rund geleuchtet.</li>
+<li><b>Kante</b> entsteht als Kontrast. Die Bauchkante <i>löst sich ins Wasser auf</i> — oben eine
+harte, unten eine weiche Kante, wie bei einem Körper unter Wasser mit Licht von oben.</li>
+<li><b>Licht</b> eine Quelle, vier Bänder: Kantenlicht am Rücken, Flanke, Kernschatten knapp über
+dem Bauch, Reflexlicht darunter. Dazu ein Längsverlauf, der Kopf und Schwanz zurücktreten lässt.</li>
+<li><b>Auge</b> klein, dunkel, nass: dunkle Kuppel mit schmaler Iris, der Reflex ein länglicher
+Streifen an der Oberkante — kein Punkt, kein weisser Kreis.</li>
+<li><b>Muster</b> liegt <i>unter</i> der Haut, als weiche Zone.</li>
+</ul>
+
+<h2>C · Gouache <small>— gemalt, mit sichtbarer Handschrift</small></h2>
+<ul>
+<li><b>Gemalt statt konstruiert.</b> Sichtbare Pinselzüge in gebrochenen Farben; manche laufen über
+die Silhouette hinaus, andere bleiben darunter und lassen die Grundierung durchblitzen.</li>
+<li><b>Kante</b> keine Kontur — nur drei abreissende Strichstücke (Rücken, Kiefer, Schwanzstiel)
+in einer Farbe aus dem Motiv.</li>
+<li><b>Licht</b> aus der Farbe, nicht aus dem Wert: Schatten kippen ins Violette, Lichter ins
+Gelbliche. Ein trockener heller Zug über dem Rücken, eine nasse dunkle Zone am Bauch.</li>
+<li><b>Auge</b> ein dunkler, leicht unrunder Fleck. Kein Ring, kein Weiss. Der Lichtpunkt ist ein
+einzelner Tupfer, absichtlich neben der Mitte und kleiner als ein Fünftel des Auges.</li>
+<li><b>Muster</b> getupft und einseitig dichter — die Zeichnung ist nicht symmetrisch.</li>
+</ul>
+
+<h2>D · Naturbuch <small>— die Tafel aus dem Bestimmungsbuch</small></h2>
+<ul>
+<li><b>Korrekte Anatomie, sauber gesetzte Zeichnung.</b> Das ist die realistische Tradition, die zum
+Thema Angeln wirklich gehört: die Illustration im Anglerhandbuch, nicht das Foto.</li>
+<li><b>Flossenstrahlen sind ausgezählt</b> und einzeln gezeichnet, in die Flossenform geclippt.
+Das ist der Punkt, an dem eine Zeichnung „gekonnt" statt „gemacht" aussieht.</li>
+<li><b>Kante</b> ein dünner, gleichmässiger Strich in einem sehr dunklen Ton der Körperfarbe —
+kein Schwarz.</li>
+<li><b>Licht</b> flach und diffus wie in einem Buch: ruhige Gegenschattierung, keine Effekte.</li>
+<li><b>Palette</b> Naturfarben, leicht abgedunkelt und entsättigt.</li>
+<li><b>Auge</b> anatomisch: Iris in Naturfarbe mit Streifung, runde Pupille, ein kleiner Reflex.</li>
+<li><b>Dazu</b> Schuppenreihen als echte Textur, Seitenlinie, Kiemendeckel mit Lichtkante.</li>
+</ul>
+
+<h2>E · Fotoecht <small>— die Obergrenze von Canvas 2D</small></h2>
+<p>So weit Richtung Foto, wie handgezeichnetes Canvas 2D überhaupt kommt. Sieben Dinge tragen ihn,
+und alle sieben fehlen dem heutigen Fisch:</p>
+<ol>
+<li>eine <b>Schuppentextur</b>, die dem Körper folgt (ein Muster, keine gezeichneten Bögen)</li>
+<li><b>nasser Glanz</b>: ein schmales, hartes Glanzband über der Flanke statt eines weichen Flecks.
+Das allein unterscheidet eine nasse von einer matten Oberfläche.</li>
+<li><b>Schillern</b>: drei breite, farbverschobene Bänder additiv übereinander</li>
+<li><b>Streulicht</b> an dünnen Stellen (Flossenansätze, Bauchkante)</li>
+<li><b>Verschattung</b> dort, wo eine Flosse den Körper trifft</li>
+<li><b>Flossenstrahlen</b> mit durchscheinender Membran dazwischen</li>
+<li>ein <b>echtes Auge</b>: Hornhautkugel mit dem Reflex OBEN DRAUF, Iris mit Streifung darunter,
+Gegenlicht am unteren Rand. Kein Comic-Glanzpunkt.</li>
+</ol>
+<p>Dazu eine <b>Temperaturspreizung</b> statt einer Färbung: Rücken kühl, Flanke neutral, Bauch warm.
+Das ist der Unterschied zwischen „eingefärbt" und „beleuchtet".</p>
+
+<h2>Die Welt</h2>
+<p>Der Wasser-Shader (<code>world-frag.js</code>) macht bereits Brechung, Spiegelung, Kaustiknetz,
+Trübung mit der Tiefe, Lichtschächte, Plankton, Glitzern und Bloom. Unter Wasser stehen dem aber nur
+fünf Elemente gegenüber: Sedimentboden, neun Steine, Anemonen am Riff, vier Lichtstrahlen,
+Schwebeteilchen. <b>Das Problem ist nicht fehlendes Detail, sondern die fehlende Mitte:</b> zwischen
+Wasserlinie und Grund liegt nichts, und es gibt keinen Vordergrund. Deshalb schwimmt jeder Fisch,
+egal wie gut gezeichnet, vor einer Wand.</p>
+<ul>
+<li><b>Tiefenbühne</b> — dieselbe Farbwelt, aber fünf Ebenen von hinten nach vorn. Der Fisch hat
+zum ersten Mal etwas hinter <i>und</i> vor sich. Passt zu A.</li>
+<li><b>Warmes Wasser</b> — Türkis nach Sand, Gegenlicht von hinten oben; alles Feste steht als
+Silhouette, der Grund ist heller als das Wasser darüber. Passt zu B und D.</li>
+<li><b>Kammer</b> — fast einfarbig, ein Lichtschacht, alles andere Halbdunkel; die Fische sind das
+Hellste im Bild. Passt zu C.</li>
+<li><b>Natursee</b> — acht Ebenen, grünbraunes Wasser mit Schwebstoff, Sichtabbruch statt Kulisse,
+Totholz quer durchs Bild, Kaustiknetz auf dem Grund, Vordergrundkraut. Die einzige Welt, die einen
+realistischen Fisch trägt. Passt zu D und E.</li>
+</ul>
+
+<h2>Was das kostet (Fussnote)</h2>
+<p>Das Spiel backt Fische bereits (<code>sprites.js</code>): Körper, Verläufe, Muster, Auge und
+Kontur werden einmal in eine Kachel gerastert und danach nur kopiert — 16 Schlagphasen, eine
+geometrische Grössenleiter, LRU-Deckel bei 32 MB, gemessene Arbeitssätze 1,7 bis 15,9 MB je Ort.
+Live bleiben nur Halo, Kaustik und Tiefenschleier.</p>
+<p>Alle Entwürfe zeichnen in genau die Teile, die schon gebacken werden. Damit kostet ein Entwurf im
+laufenden Bild <b>dasselbe wie heute: ein <code>drawImage</code> je Fisch</b>, egal wie aufwendig er
+gezeichnet ist. Was steigt, ist die Backzeit einer Kachel (einmal je Art × Grössenstufe × Phase).
+Keiner benutzt <code>shadowBlur</code>, keiner eine Hilfsleinwand je Bild, keiner einen zusätzlichen
+Vollbild-Durchgang, keiner rührt die Auflösung an.</p>
+</article>
+</div>
+
+<script src="anatomie.js"></script>
+<script src="palette.js"></script>
+<script src="arten.js"></script>
+<script src="ist.js"></script>
+<script src="a-vektor.js"></script>
+<script src="b-licht.js"></script>
+<script src="c-papier.js"></script>
+<script src="d-gemalt.js"></script>
+<script src="e-emblem.js"></script>
+<script src="f-real.js"></script>
+<script src="welt.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

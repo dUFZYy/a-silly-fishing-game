@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Which fish do you like? · Welcher Fisch gefällt dir?</title>
+<style>
+  :root {
+    --grund: #0e1b24;
+    --karte: #162836;
+    --rand: #24435a;
+    --schrift: #e8eff4;
+    --leise: #93aebe;
+    --akzent: #63b6e0;
+    --akzent-dunkel: #2b7ba6;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--grund); color: var(--schrift);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  body { padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px); }
+  #seite { max-width: 760px; margin: 0 auto; padding: 12px 14px 40px; }
+
+  .kopf { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+  .sprachknopf {
+    background: none; border: 1px solid var(--rand); color: var(--leise);
+    border-radius: 999px; padding: 5px 14px; font-size: 13px; cursor: pointer;
+  }
+  .sprachknopf:active { background: var(--rand); }
+
+  h1 { font-size: 25px; line-height: 1.25; margin: 6px 0 8px; }
+  h2.fragetext { font-size: 19px; line-height: 1.3; margin: 2px 0 2px; font-weight: 600; }
+  h3 { font-size: 15px; margin: 22px 0 8px; color: var(--leise); font-weight: 600; }
+  p { margin: 0 0 10px; }
+  .unter { color: var(--leise); }
+  .hinweis { color: var(--leise); font-size: 14px; }
+  .tippe { color: var(--akzent); font-size: 14px; margin-bottom: 12px; }
+  .zaehler { color: var(--leise); font-size: 13px; margin: 8px 0 2px; }
+
+  .karte { background: var(--karte); border: 1px solid var(--rand); border-radius: 16px; padding: 20px 18px; }
+  .karte.mitte { text-align: center; margin-top: 8vh; }
+  .karte.mitte .hinweis { text-align: left; margin-top: 16px; }
+
+  button.gross {
+    display: block; width: 100%; margin: 18px 0 0;
+    background: var(--akzent-dunkel); color: #fff; border: 0;
+    border-radius: 12px; padding: 15px; font-size: 17px; font-weight: 600; cursor: pointer;
+  }
+  button.gross:active { background: var(--akzent); }
+  button.gross:disabled { opacity: 0.5; }
+  button.klein {
+    display: block; margin: 16px auto 0; background: none; border: 0;
+    color: var(--leise); font-size: 14px; text-decoration: underline; cursor: pointer;
+  }
+
+  .balken { display: flex; gap: 6px; margin: 4px 0 10px; }
+  .punkt { flex: 1; height: 3px; border-radius: 2px; background: var(--rand); }
+  .punkt.an { background: var(--akzent); }
+
+  /* Sechs Felder. Auf dem Telefon zwei Spalten — drei waeren zu klein, um eine
+     Zeichnung wirklich zu beurteilen, und genau darum geht es hier. */
+  .gitter { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .feld {
+    position: relative; padding: 0; border: 2px solid transparent;
+    border-radius: 12px; overflow: hidden; background: #14364b; cursor: pointer;
+    aspect-ratio: 4 / 3;
+  }
+  .gitter.szene .feld { aspect-ratio: 3 / 4; }
+  .feld canvas { display: block; width: 100%; height: 100%; }
+  .feld.gewaehlt { border-color: var(--akzent); }
+  .marke {
+    position: absolute; left: 7px; top: 7px;
+    background: rgba(6,18,26,0.66); color: #fff;
+    border-radius: 7px; padding: 1px 8px; font-size: 13px; font-weight: 700;
+  }
+  @media (min-width: 620px) { .gitter { grid-template-columns: repeat(3, 1fr); } }
+
+  .meins { border-top: 1px solid var(--rand); }
+  .meinsZeile { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--rand); }
+  .meinsNr { color: var(--leise); font-size: 13px; width: 14px; }
+  .meinsText { flex: 1; font-size: 14px; color: var(--leise); }
+  .meinsWahl { font-weight: 700; color: var(--akzent); font-size: 17px; }
+
+  .wahlreihe { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .wahl {
+    background: none; border: 1px solid var(--rand); color: var(--schrift);
+    border-radius: 999px; padding: 9px 15px; font-size: 14px; cursor: pointer;
+  }
+  .wahl.gewaehlt { border-color: var(--akzent); color: var(--akzent); }
+
+  textarea {
+    width: 100%; background: #0f2331; color: var(--schrift);
+    border: 1px solid var(--rand); border-radius: 10px; padding: 11px;
+    font: inherit; font-size: 15px; resize: vertical;
+  }
+  .status { color: var(--akzent); font-size: 14px; margin-top: 10px; text-align: center; }
+
+  .gesamt { margin-top: 22px; }
+  .bar { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; }
+  .barName { width: 18px; font-weight: 700; color: var(--leise); font-size: 14px; }
+  .spur { flex: 1; height: 9px; background: var(--rand); border-radius: 5px; overflow: hidden; }
+  .fuell { height: 100%; background: var(--akzent); border-radius: 5px; }
+  .barZahl { width: 26px; text-align: right; color: var(--leise); font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="seite"></div>
+
+<script src="anatomie.js"></script>
+<script src="arten.js"></script>
+<script src="palette.js"></script>
+<script src="ist.js"></script>
+<script src="a-vektor.js"></script>
+<script src="b-licht.js"></script>
+<script src="c-papier.js"></script>
+<script src="d-gemalt.js"></script>
+<script src="e-emblem.js"></script>
+<script src="f-real.js"></script>
+<script src="stimmen.js"></script>
+<script src="umfrage.js"></script>
+</body>
+</html>
