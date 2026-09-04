@@ -26,42 +26,49 @@
 // ohne dass eine Zeile Oberflaeche sich aendert.
 //
 // -----------------------------------------------------------------------------
-// EINRICHTEN — Dustins drei Schritte, danach ist es live
+// EINGERICHTET am 04.09.2026 — was in der Datenbank steht
 // -----------------------------------------------------------------------------
 //
-// 1. supabase.com, kostenloses Projekt anlegen.
+// Angelegt ueber die MCP-Anbindung, Migration `stimmen_umfrage_fischdesign`:
 //
-// 2. Im SQL-Editor einmal das hier ausfuehren:
+//   create table public.stimmen (
+//     id bigserial primary key,
+//     wann timestamptz not null default now(),
+//     teilnehmer text not null,   -- zufaellige ID aus dem Browser, keine Person
+//     runde text not null,        -- welche der vier Fragen
+//     wahl text not null,         -- welcher Entwurf gewonnen hat
+//     sprache text, spieler text, kommentar text,
+//     constraint stimmen_kurz check (...)   -- Laengengrenzen, s. Migration
+//   );
+//   alter table public.stimmen enable row level security;
+//   create policy "eintragen erlaubt" on public.stimmen
+//     for insert to anon, authenticated with check (true);
 //
-//      create table stimmen (
-//        id          bigserial primary key,
-//        wann        timestamptz not null default now(),
-//        teilnehmer  text        not null,     -- zufaellige ID aus dem Browser
-//        runde       text        not null,     -- welche Frage
-//        wahl        text        not null,     -- welcher Entwurf gewonnen hat
-//        sprache     text,
-//        spieler     text,                     -- spielt Handyspiele: ja/nein
-//        kommentar   text
-//      );
+// DIE REGEL IST DER GANZE SCHUTZ: eintragen ja, lesen/aendern/loeschen nein.
+// Nachgeprueft, nicht angenommen — mit dem oeffentlichen Schluessel:
 //
-//      alter table stimmen enable row level security;
+//   POST   -> 201, die Zeile steht drin
+//   GET    -> 200 mit LEERER Liste (fremde Antworten sind unsichtbar)
+//   DELETE -> 204, aber es wird nichts geloescht
+//   PATCH  -> 204, aber es wird nichts geaendert
 //
-//      -- Jeder darf eintragen, NIEMAND darf lesen, aendern oder loeschen.
-//      -- Das ist der ganze Missbrauchsschutz, den ein oeffentlicher
-//      -- Schluessel braucht: im schlimmsten Fall traegt jemand Unsinn ein,
-//      -- aber er sieht keine fremden Antworten und kann keine loeschen.
-//      create policy "eintragen erlaubt" on stimmen
-//        for insert to anon with check (true);
+// Schlimmstenfalls traegt also jemand Unsinn ein. Das ist bei einer Umfrage
+// ohne Anmeldung ohnehin nicht zu verhindern und im Zweifel per SQL zu
+// bereinigen.
 //
-//    Die Auswertung liest Dustin im Supabase-Tabelleneditor oder ich per
-//    Service-Schluessel — der gehoert NICHT hierher und NICHT ins Repo.
+// AUSWERTEN geht nur mit dem Dienstschluessel, also ueber die MCP-Anbindung
+// oder den Tabelleneditor — nie aus dem Browser. Beispiel:
 //
-// 3. Unten die zwei Zeilen ausfuellen. Beides steht in Supabase unter
-//    Project Settings -> API. Der `anon`-Schluessel, nicht der `service_role`.
+//   select wahl, count(*) from stimmen where runde = 'normal'
+//   group by wahl order by 2 desc;
+//
+// Dieselbe Tabelle ist der Probelauf fuer die spaetere Bestenliste. Die
+// braucht dann eine eigene Tabelle mit eigener Regel — und dort wird Lesen
+// erlaubt sein muessen, Schreiben aber begrenzt.
 //
 const STIMMEN_ZIEL = {
-  url:      "",   // z. B. "https://abcdefgh.supabase.co"
-  schluessel: ""  // der oeffentliche anon-Key
+  url:        "https://gxqoyyicwczmqttcsant.supabase.co",
+  schluessel: "sb_publishable_Zd8gkAdnP4LRxmewjaDyJw_5330_hE-"
 };
 
 const Stimmen = {
